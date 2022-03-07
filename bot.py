@@ -1,4 +1,5 @@
 import tweepy
+from tweepy import TweepyException
 
 twitter_oauth = tweepy.OAuthHandler(CONSUMER_KEY, CONSUMER_SECRET)
 twitter_oauth.set_access_token(TOKEN, SECRET)
