@@ -1,16 +1,138 @@
 import tweepy
-from tweepy import TweepyException
+from tweepy import TooManyRequests
+import json
+import requests
+import base64
+from datetime import datetime, timezone, timedelta
+import pytz
+import os
+from dotenv import load_dotenv
 
-twitter_oauth = tweepy.OAuthHandler(CONSUMER_KEY, CONSUMER_SECRET)
-twitter_oauth.set_access_token(TOKEN, SECRET)
-api = tweepy.API(twitter_oauth, wait_on_rate_limit=True)
 
-tweets = tweepy.Cursor(api.search_tweets, q="(alfajor OR alfajores) -filter:replies", result_type='recent').items(100)
+class Retweet(object):
+    def __init__(self):
+        self.client_id = None
+        self.client_secret = None
+        self.banned_words = None
+        self.config = {}
+        self.v2_api = None
+        self.tweets = None
+        self.logs = []
+        self.datetime_now = datetime.now(timezone.utc).astimezone(tz=pytz.timezone("America/Argentina/Buenos_Aires"))
 
-for tweet in tweets:
-    try:
-        api.retweet(id=tweet.id)
-        print("Retwiteado!")
-    except tweepy.TweepyException as e:
-        print(e)
-        continue
+    def run(self):
+        self.load_env()
+        self.get_config()
+        self.get_api_v2_client()
+        self.get_tweets()
+        self.do_retweets()
+        self.save_logs()
+
+    def load_env(self):
+        load_dotenv()
+        self.client_id = os.environ.get("CLIENT_ID")
+        self.client_secret = os.environ.get("CLIENT_SECRET")
+        self.banned_words = json.loads(os.environ.get("BANNED_WORDS"))
+
+    def get_config(self):
+        with open(file="config.json", mode="r+", encoding="utf8") as f:
+            self.config = json.load(f)
+
+    @staticmethod
+    def should_we_refresh_token(token):
+        expires_at = datetime.fromtimestamp(token["expires_at"])
+        if expires_at - datetime.now() <= timedelta(minutes=5):
+            return True
+        return False
+
+    def refresh_token(self):
+        authorization_bytes = f"{self.client_id}:{self.client_secret}".encode("utf8")
+        authorization_b64_bytes = base64.b64encode(authorization_bytes)
+        authorization_b64 = authorization_b64_bytes.decode("utf8")
+
+        data = {
+            "refresh_token": self.config["token"]["refresh_token"],
+            "grant_type": "refresh_token",
+            "client_id": self.client_id
+        }
+
+        headers = {
+            "Authorization": f"Basic {authorization_b64}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        response = requests.post("https://api.twitter.com/2/oauth2/token", data=data, headers=headers)
+        response = response.json()
+
+        self.config["token"]["access_token"] = response["access_token"]
+        self.config["token"]["expires_at"] = datetime.now().timestamp() + response["expires_in"]
+        self.config["token"]["refresh_token"] = response["refresh_token"]
+
+        with open(file="config.json", mode="w+", encoding="utf8") as f:
+            json.dump(self.config, f, ensure_ascii=False)
+
+    def get_api_v2_client(self):
+        if not self.config["token"]["access_token"]:
+            oauth2_user_handler = tweepy.OAuth2UserHandler(
+                client_id=self.client_id,
+                redirect_uri="https://127.0.0.1",
+                scope=["tweet.read", "tweet.write", "offline.access", "users.read"],
+                client_secret=self.client_secret
+            )
+
+            print(oauth2_user_handler.get_authorization_url())
+
+            auth_response = input()
+
+            access_token = oauth2_user_handler.fetch_token(auth_response)
+
+            self.config["token"]["access_token"] = access_token["access_token"]
+            self.config["token"]["expires_at"] = access_token["expires_at"]
+            self.config["token"]["refresh_token"] = access_token["refresh_token"]
+
+            with open(file="config.json", mode="w+", encoding="utf8") as f:
+                json.dump(self.config, f, ensure_ascii=False)
+
+        if self.should_we_refresh_token(self.config["token"]):
+            self.refresh_token()
+
+        self.v2_api = tweepy.Client(bearer_token=self.config["token"]["access_token"])
+
+    def get_tweets(self):
+        self.tweets = self.v2_api.search_recent_tweets(query="(alfajor OR alfajores) -is:reply -is:retweet",
+                                                       max_results=100, sort_order="recency", user_auth=False)
+        self.logs.append(f"{self.datetime_now} Read {len(self.tweets.data)} tweets!")
+
+    def do_retweets(self):
+        n_retweets = 0
+        n_already_retweeted = 0
+        n_skipped = 0
+        for tweet in self.tweets.data:
+            try:
+                if any(substring in tweet.text for substring in self.banned_words):
+                    n_skipped += 1
+                    continue
+                if "alfajor" not in tweet.text.lower() and "alfajores" not in tweet.text.lower():
+                    n_skipped += 1
+                    continue
+                if tweet.id in self.config["retweets"]:
+                    n_already_retweeted += 1
+                    continue
+                self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
+                self.config["retweets"].append(tweet.id)
+                n_retweets += 1
+                with open(file="config.json", mode="w+", encoding="utf8") as f:
+                    json.dump(self.config, f, ensure_ascii=False)
+            except TooManyRequests:
+                break
+        self.logs.append(f"{self.datetime_now} Retweeted {n_retweets} tweets!")
+        self.logs.append(f"{self.datetime_now} Skipped {n_already_retweeted} repeated tweets.")
+        self.logs.append(f"{self.datetime_now} Skipped {n_skipped} tweets.")
+
+    def save_logs(self):
+        with open(file="botalfajor.log", mode="a+", encoding="utf8") as f:
+            f.write("\n".join(self.logs) + "\n")
+
+
+if __name__ == '__main__':
+    Retweet().run()
