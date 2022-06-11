@@ -19,14 +19,16 @@ class Retweet(object):
         self.tweets = None
         self.logs = []
         self.datetime_now = datetime.now(timezone.utc).astimezone(tz=pytz.timezone("America/Argentina/Buenos_Aires"))
+        self.stats = {}
 
     def run(self):
         self.load_env()
-        self.get_config()
+        self.get_config_and_stats()
         self.get_api_v2_client()
         self.get_tweets()
         self.do_retweets()
         self.save_logs()
+        self.save_stats()
 
     def load_env(self):
         load_dotenv()
@@ -34,9 +36,16 @@ class Retweet(object):
         self.client_secret = os.environ.get("CLIENT_SECRET")
         self.banned_words = json.loads(os.environ.get("BANNED_WORDS"))
 
-    def get_config(self):
+    def get_config_and_stats(self):
         with open(file="config.json", mode="r+", encoding="utf8") as f:
             self.config = json.load(f)
+        with open(file="stats.json", mode="r+", encoding="utf8") as f:
+            self.stats = json.load(f)
+        if not self.stats:
+            self.stats = {"last_time_ran": "", "times_ran": 0, "refreshed_tokens": 0, "times_logged": 0,
+                          "retrieved_tweets": 0, "times_retweeted": 0, "repeated_tweets": 0, "skipped_tweets": 0}
+        self.stats["last_time_ran"] = str(self.datetime_now)
+        self.stats["times_ran"] += 1
 
     @staticmethod
     def should_we_refresh_token(token):
@@ -68,6 +77,8 @@ class Retweet(object):
         self.config["token"]["expires_at"] = datetime.now().timestamp() + response["expires_in"]
         self.config["token"]["refresh_token"] = response["refresh_token"]
 
+        self.stats["refreshed_tokens"] += 1
+
         with open(file="config.json", mode="w+", encoding="utf8") as f:
             json.dump(self.config, f, ensure_ascii=False)
 
@@ -98,10 +109,13 @@ class Retweet(object):
 
         self.v2_api = tweepy.Client(bearer_token=self.config["token"]["access_token"])
 
+        self.stats["times_logged"] += 1
+
     def get_tweets(self):
         self.tweets = self.v2_api.search_recent_tweets(query="(alfajor OR alfajores) -is:reply -is:retweet",
                                                        max_results=100, sort_order="recency", user_auth=False)
         self.logs.append(f"{self.datetime_now} Read {len(self.tweets.data)} tweets!")
+        self.stats["retrieved_tweets"] += len(self.tweets.data)
 
     def do_retweets(self):
         n_retweets = 0
@@ -124,14 +138,22 @@ class Retweet(object):
                 with open(file="config.json", mode="w+", encoding="utf8") as f:
                     json.dump(self.config, f, ensure_ascii=False)
             except TooManyRequests:
+                self.logs.append(f"{self.datetime_now} RATELIMITED!")
                 break
         self.logs.append(f"{self.datetime_now} Retweeted {n_retweets} tweets!")
         self.logs.append(f"{self.datetime_now} Skipped {n_already_retweeted} repeated tweets.")
         self.logs.append(f"{self.datetime_now} Skipped {n_skipped} tweets.")
+        self.stats["times_retweeted"] += n_retweets
+        self.stats["repeated_tweets"] += n_already_retweeted
+        self.stats["skipped_tweets"] += n_skipped
 
     def save_logs(self):
         with open(file="botalfajor.log", mode="a+", encoding="utf8") as f:
             f.write("\n".join(self.logs) + "\n")
+
+    def save_stats(self):
+        with open(file="stats.json", mode="w+", encoding="utf8") as f:
+            json.dump(self.stats, f, ensure_ascii=False, indent=4)
 
 
 if __name__ == '__main__':
