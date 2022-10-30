@@ -213,6 +213,9 @@ class Retweet(object):
         self.stats["skipped_tweets"] += n_skipped
 
     def save_logs(self):
+        if not os.path.isfile("botalfajor.log"):
+            with open(file="botalfajor.log", mode="w+", encoding="utf8") as f:
+                f.write("")
         with open(file="botalfajor.log", mode="a+", encoding="utf8") as f:
             f.write("\n".join(self.logs) + "\n")
 
