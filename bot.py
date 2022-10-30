@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 import pytz
 import os
 from dotenv import load_dotenv
+from unidecode import unidecode
 
 
 class Retweet(object):
@@ -158,7 +159,9 @@ class Retweet(object):
             modified_tweet_text = modified_tweet_text.replace(
                 f"@{mention['username']}", ""
             )
-            if "alfajor" in mention["username"] or "alfajores" in mention["username"]:
+            if "alfajor" in unidecode(
+                mention["username"].lower()
+            ) or "alfajores" in unidecode(mention["username"].lower()):
                 mentions_alfajor = True
         if not mentions_alfajor:
             return
