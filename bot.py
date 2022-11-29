@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 import pytz
 import os
 from unidecode import unidecode
+import backoff
 
 
 class Retweet(object):
@@ -164,6 +165,7 @@ class Retweet(object):
             return
         return True
 
+    @backoff.on_exception(backoff.expo, TooManyRequests, max_time=240)
     def do_retweets(self):
         n_retweets = 0
         n_already_retweeted = 0
