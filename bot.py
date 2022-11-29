@@ -6,15 +6,14 @@ import base64
 from datetime import datetime, timezone, timedelta
 import pytz
 import os
-from dotenv import load_dotenv
 from unidecode import unidecode
 
 
 class Retweet(object):
     def __init__(self):
-        self.client_id = None
-        self.client_secret = None
-        self.banned_words = None
+        self.client_id = os.environ.get("CLIENT_ID")
+        self.client_secret = os.environ.get("CLIENT_SECRET")
+        self.banned_words = json.loads(os.environ.get("BANNED_WORDS"))
         self.config = {}
         self.v2_api = None
         self.tweets = None
@@ -25,19 +24,12 @@ class Retweet(object):
         self.stats = {}
 
     def run(self):
-        self.load_env()
         self.get_config_and_stats()
         self.get_api_v2_client()
         self.get_tweets()
         self.do_retweets()
         self.save_logs()
         self.save_stats()
-
-    def load_env(self):
-        load_dotenv()
-        self.client_id = os.environ.get("CLIENT_ID")
-        self.client_secret = os.environ.get("CLIENT_SECRET")
-        self.banned_words = json.loads(os.environ.get("BANNED_WORDS"))
 
     def get_config_and_stats(self):
         if not os.path.isfile("config.json"):
@@ -133,7 +125,7 @@ class Retweet(object):
         if self.should_we_refresh_token(self.config["token"]):
             self.refresh_token()
 
-        self.v2_api = tweepy.Client(bearer_token=self.config["token"]["access_token"])
+        self.v2_api = tweepy.Client(self.config["token"]["access_token"])
 
         self.stats["times_logged"] += 1
 
