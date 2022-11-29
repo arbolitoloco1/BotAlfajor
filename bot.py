@@ -14,7 +14,7 @@ class Retweet(object):
     def __init__(self):
         self.client_id = os.environ.get("CLIENT_ID")
         self.client_secret = os.environ.get("CLIENT_SECRET")
-        self.banned_words = json.loads(os.environ.get("BANNED_WORDS"))
+        self.banned_words = os.environ.get("BANNED_WORDS").split(",,,")
         self.config = {}
         self.v2_api = None
         self.tweets = None
