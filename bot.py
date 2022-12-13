@@ -28,7 +28,7 @@ class Retweet(object):
         self.get_config_and_stats()
         self.get_api_v2_client()
         self.get_tweets()
-        self.do_retweets()
+        self.process_tweets()
         self.save_logs()
         self.save_stats()
 
@@ -143,9 +143,9 @@ class Retweet(object):
     @staticmethod
     def check_tweet_mentions(tweet):
         if not tweet.entities:
-            return
+            return False
         if "mentions" not in tweet.entities:
-            return
+            return False
         modified_tweet_text = tweet.text
         mentions_alfajor = False
         for mention in tweet.entities["mentions"]:
@@ -157,49 +157,52 @@ class Retweet(object):
             ) or "alfajores" in unidecode(mention["username"].lower()):
                 mentions_alfajor = True
         if not mentions_alfajor:
-            return
+            return False
         if (
             "alfajor" in modified_tweet_text.lower()
             or "alfajores" in modified_tweet_text.lower()
         ):
-            return
+            return False
         return True
 
     @backoff.on_exception(backoff.expo, TooManyRequests, max_time=240)
-    def do_retweets(self):
+    def do_retweet(self, tweet):
+        self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
+
+    def process_tweets(self):
         n_retweets = 0
         n_already_retweeted = 0
         n_skipped = 0
         for tweet in self.tweets.data:
+            if any(substring in tweet.text for substring in self.banned_words):
+                n_skipped += 1
+                self.logs.append(f"Skipping this tweet '{tweet.text}'")
+                continue
+            if (
+                "alfajor" not in tweet.text.lower()
+                and "alfajores" not in tweet.text.lower()
+            ):
+                n_skipped += 1
+                self.logs.append(f"Skipping this tweet '{tweet.text}'")
+                continue
+            if tweet.id in self.config["retweets"]:
+                n_already_retweeted += 1
+                continue
+            skip_tweet = self.check_tweet_mentions(tweet)
+            if skip_tweet:
+                n_skipped += 1
+                self.logs.append(f"Skipping this tweet '{tweet.text}'")
+                continue
             try:
-                if any(substring in tweet.text for substring in self.banned_words):
-                    n_skipped += 1
-                    self.logs.append(f"Skipping this tweet '{tweet.text}'")
-                    continue
-                if (
-                    "alfajor" not in tweet.text.lower()
-                    and "alfajores" not in tweet.text.lower()
-                ):
-                    n_skipped += 1
-                    self.logs.append(f"Skipping this tweet '{tweet.text}'")
-                    continue
-                if tweet.id in self.config["retweets"]:
-                    n_already_retweeted += 1
-                    continue
-                skip_tweet = self.check_tweet_mentions(tweet)
-                if skip_tweet:
-                    n_skipped += 1
-                    self.logs.append(f"Skipping this tweet '{tweet.text}'")
-                    continue
-                self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
-                self.config["retweets"].append(tweet.id)
-                n_retweets += 1
-                with open(file="config.json", mode="w+", encoding="utf8") as f:
-                    json.dump(self.config, f, ensure_ascii=False)
+                self.do_retweet(tweet)
             except TooManyRequests:
                 self.logs.append(f"{self.datetime_now} RATELIMITED!")
                 self.stats["ratelimits"] += 1
                 break
+            self.config["retweets"].append(tweet.id)
+            n_retweets += 1
+            with open(file="config.json", mode="w+", encoding="utf8") as f:
+                json.dump(self.config, f, ensure_ascii=False)
         self.logs.append(f"{self.datetime_now} Retweeted {n_retweets} tweets!")
         self.logs.append(
             f"{self.datetime_now} Skipped {n_already_retweeted} repeated tweets."
