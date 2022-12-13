@@ -1,5 +1,5 @@
 import tweepy
-from tweepy import TooManyRequests
+from tweepy import TooManyRequests, Unauthorized
 import json
 import requests
 import base64
@@ -27,7 +27,11 @@ class Retweet(object):
     def run(self):
         self.get_config_and_stats()
         self.get_api_v2_client()
-        self.get_tweets()
+        try:
+            self.get_tweets()
+        except Unauthorized:
+            self.refresh_token()
+            self.get_tweets()
         self.process_tweets()
         self.save_logs()
         self.save_stats()
