@@ -8,6 +8,7 @@ import pytz
 import os
 from unidecode import unidecode
 import backoff
+import re
 
 
 class Retweet(object):
@@ -160,27 +161,22 @@ class Retweet(object):
         self.stats["retrieved_tweets"] += len(self.tweets)
 
     @staticmethod
-    def check_tweet_mentions(tweet):
+    def is_word_in_string(string):
+        if re.search(r"\b(alfajor)\b", unidecode(string.lower())) or re.search(r"\b(alfajores)\b", unidecode(string.lower())):
+            return True
+        return False
+
+    def word_in_mentions(self, tweet):
         if not tweet.entities:
             return False
         if "mentions" not in tweet.entities:
             return False
         modified_tweet_text = tweet.text
-        mentions_alfajor = False
         for mention in tweet.entities["mentions"]:
             modified_tweet_text = modified_tweet_text.replace(
                 f"@{mention['username']}", ""
             )
-            if "alfajor" in unidecode(
-                mention["username"].lower()
-            ) or "alfajores" in unidecode(mention["username"].lower()):
-                mentions_alfajor = True
-        if not mentions_alfajor:
-            return False
-        if (
-            "alfajor" in modified_tweet_text.lower()
-            or "alfajores" in modified_tweet_text.lower()
-        ):
+        if self.is_word_in_string(modified_tweet_text):
             return False
         return True
 
@@ -204,18 +200,14 @@ class Retweet(object):
                 n_skipped += 1
                 self.logs.append(f"Skipping this tweet '{tweet.text}'")
                 continue
-            if (
-                "alfajor" not in tweet.text.lower()
-                and "alfajores" not in tweet.text.lower()
-            ):
+            if not self.is_word_in_string(tweet.text):
                 n_skipped += 1
                 self.logs.append(f"Skipping this tweet '{tweet.text}'")
                 continue
             if tweet.id in self.config["retweets"]:
                 n_already_retweeted += 1
                 continue
-            skip_tweet = self.check_tweet_mentions(tweet)
-            if skip_tweet:
+            if self.word_in_mentions(tweet):
                 n_skipped += 1
                 self.logs.append(f"Skipping this tweet '{tweet.text}'")
                 continue
