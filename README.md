@@ -9,8 +9,9 @@ The script reads three different variables from the environment: `CLIENT_ID`, `C
 - `CLIENT_SECRET`: OAuth 2.0 Client Secret, found in Twitter Developer Portal
 - `BANNED_WORDS`: A `,,,` separated list of words that when present in a Tweet will make the script skip it
 
-I personally prefer to export/set these variables at the start of my cron file, but you can also set them in .bashrc for example.
 [This link](https://developer.twitter.com/en/docs/platform-overview) contains more info about the Twitter API and how to request an application.
+
+I personally prefer to export/set these variables at the start of my cron file, but you can also set them in .bashrc for example.
 
 This script requires Twitter API v2, so you will need elevated access.
 
