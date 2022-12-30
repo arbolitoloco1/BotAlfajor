@@ -1,5 +1,5 @@
 import tweepy
-from tweepy import TooManyRequests, Unauthorized
+from tweepy import TooManyRequests, Unauthorized, BadRequest
 import json
 import requests
 import base64
@@ -171,7 +171,10 @@ class Retweet(object):
 
     @backoff.on_exception(backoff.expo, TooManyRequests, max_time=240)
     def do_retweet(self, tweet):
-        self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
+        try:
+            self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
+        except BadRequest:
+            self.logs.append(f"Tweet was not found {tweet.id}")
 
     def process_tweets(self):
         n_retweets = 0
