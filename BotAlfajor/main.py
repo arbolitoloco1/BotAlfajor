@@ -1,5 +1,5 @@
 import tweepy
-from tweepy import TooManyRequests, Unauthorized, BadRequest
+from tweepy import TooManyRequests, Unauthorized, BadRequest, HTTPException, TwitterServerError
 import json
 import requests
 import base64
@@ -124,8 +124,7 @@ class Retweet(object):
             self.config["token"]["expires_at"] = access_token["expires_at"]
             self.config["token"]["refresh_token"] = access_token["refresh_token"]
 
-            with open(file="config.json", mode="w+", encoding="utf8") as f:
-                json.dump(self.config, f, ensure_ascii=False)
+            self.save_config()
 
         if self.should_we_refresh_token(self.config["token"]):
             self.refresh_token()
@@ -135,14 +134,30 @@ class Retweet(object):
         self.stats["times_logged"] += 1
 
     def get_tweets(self):
-        self.tweets = self.v2_api.search_recent_tweets(
-            query="(alfajor OR alfajores) -is:retweet",
-            max_results=100,
-            sort_order="recency",
-            expansions="entities.mentions.username",
-        )
-        self.logs.append(f"{self.datetime_now} Read {len(self.tweets.data)} tweets!")
-        self.stats["retrieved_tweets"] += len(self.tweets.data)
+        next_token = None
+        tweets = []
+        while True:
+            response = self.v2_api.search_recent_tweets(
+                query="(alfajor OR alfajores) -is:retweet",
+                max_results=100,
+                sort_order="recency",
+                expansions="entities.mentions.username",
+                since_id=self.config.get("most_recent_tweet"),
+                next_token=next_token
+            )
+            if response.data is None:
+                break
+            tweets.extend(response.data)
+            if "next_token" not in response.meta:
+                break
+            next_token = response.meta["next_token"]
+            if not self.config.get("most_recent_tweet"):
+                break
+
+        self.tweets = list(reversed(tweets))
+
+        self.logs.append(f"{self.datetime_now} Read {len(self.tweets)} tweets!")
+        self.stats["retrieved_tweets"] += len(self.tweets)
 
     @staticmethod
     def check_tweet_mentions(tweet):
@@ -169,7 +184,8 @@ class Retweet(object):
             return False
         return True
 
-    @backoff.on_exception(backoff.expo, TooManyRequests, max_time=240)
+    @backoff.on_exception(backoff.expo, (TwitterServerError, HTTPException), max_time=60)
+    @backoff.on_exception(backoff.expo, TooManyRequests, max_tries=2)
     def do_retweet(self, tweet):
         try:
             self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
@@ -180,7 +196,10 @@ class Retweet(object):
         n_retweets = 0
         n_already_retweeted = 0
         n_skipped = 0
-        for tweet in self.tweets.data:
+        for tweet in self.tweets:
+            former_most_recent_tweet = self.config.get("most_recent_tweet")
+            self.config["most_recent_tweet"] = tweet.id
+            self.save_config()
             if any(substring in tweet.text for substring in self.banned_words):
                 n_skipped += 1
                 self.logs.append(f"Skipping this tweet '{tweet.text}'")
@@ -205,11 +224,12 @@ class Retweet(object):
             except TooManyRequests:
                 self.logs.append(f"{self.datetime_now} RATELIMITED!")
                 self.stats["ratelimits"] += 1
+                self.config["most_recent_tweet"] = former_most_recent_tweet
+                self.save_config()
                 break
             self.config["retweets"].append(tweet.id)
             n_retweets += 1
-            with open(file="config.json", mode="w+", encoding="utf8") as f:
-                json.dump(self.config, f, ensure_ascii=False)
+            self.save_config()
         self.logs.append(f"{self.datetime_now} Retweeted {n_retweets} tweets!")
         self.logs.append(
             f"{self.datetime_now} Skipped {n_already_retweeted} repeated tweets."
@@ -229,6 +249,10 @@ class Retweet(object):
     def save_stats(self):
         with open(file="stats.json", mode="w+", encoding="utf8") as f:
             json.dump(self.stats, f, ensure_ascii=False, indent=4)
+
+    def save_config(self):
+        with open(file="config.json", mode="w+", encoding="utf8") as f:
+            json.dump(self.config, f, ensure_ascii=False)
 
 
 if __name__ == "__main__":
