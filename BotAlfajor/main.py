@@ -1,9 +1,7 @@
 import tweepy
-from tweepy import TooManyRequests, Unauthorized, BadRequest, HTTPException, TwitterServerError
+from tweepy import TooManyRequests, BadRequest, HTTPException, TwitterServerError
 import json
-import requests
-import base64
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import pytz
 import os
 from unidecode import unidecode
@@ -13,8 +11,8 @@ import re
 
 class Retweet(object):
     def __init__(self):
-        self.client_id = os.environ.get("CLIENT_ID")
-        self.client_secret = os.environ.get("CLIENT_SECRET")
+        self.consumer_key = os.environ.get("TWITTER_CONSUMER_KEY")
+        self.consumer_secret = os.environ.get("TWITTER_CONSUMER_SECRET")
         self.banned_words = os.environ.get("BANNED_WORDS").split(",,,")
         self.config = {}
         self.v2_api = None
@@ -28,11 +26,7 @@ class Retweet(object):
     def run(self):
         self.get_config_and_stats()
         self.get_api_v2_client()
-        try:
-            self.get_tweets()
-        except Unauthorized:
-            self.refresh_token()
-            self.get_tweets()
+        self.get_tweets()
         self.process_tweets()
         self.save_logs()
         self.save_stats()
@@ -67,70 +61,35 @@ class Retweet(object):
         self.stats["last_time_ran"] = str(self.datetime_now)
         self.stats["times_ran"] += 1
 
-    @staticmethod
-    def should_we_refresh_token(token):
-        expires_at = datetime.fromtimestamp(token["expires_at"])
-        if expires_at - datetime.now() <= timedelta(minutes=5):
-            return True
-        return False
-
-    def refresh_token(self):
-        authorization_bytes = f"{self.client_id}:{self.client_secret}".encode("utf8")
-        authorization_b64_bytes = base64.b64encode(authorization_bytes)
-        authorization_b64 = authorization_b64_bytes.decode("utf8")
-
-        data = {
-            "refresh_token": self.config["token"]["refresh_token"],
-            "grant_type": "refresh_token",
-            "client_id": self.client_id,
-        }
-
-        headers = {
-            "Authorization": f"Basic {authorization_b64}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-
-        response = requests.post(
-            "https://api.twitter.com/2/oauth2/token", data=data, headers=headers
-        )
-        response = response.json()
-
-        self.config["token"]["access_token"] = response["access_token"]
-        self.config["token"]["expires_at"] = (
-            datetime.now().timestamp() + response["expires_in"]
-        )
-        self.config["token"]["refresh_token"] = response["refresh_token"]
-
-        self.stats["refreshed_tokens"] += 1
-
-        with open(file="config.json", mode="w+", encoding="utf8") as f:
-            json.dump(self.config, f, ensure_ascii=False)
-
     def get_api_v2_client(self):
-        if not self.config["token"]["access_token"]:
-            oauth2_user_handler = tweepy.OAuth2UserHandler(
-                client_id=self.client_id,
-                redirect_uri="https://127.0.0.1",
-                scope=["tweet.read", "tweet.write", "offline.access", "users.read"],
-                client_secret=self.client_secret,
+        if "tokens" not in self.config or not self.config["tokens"]["access_token"]:
+            oauth1_user_handler = tweepy.OAuth1UserHandler(
+                self.consumer_key,
+                self.consumer_secret,
+                callback="oob",
             )
 
-            print(oauth2_user_handler.get_authorization_url())
+            print(oauth1_user_handler.get_authorization_url())
 
-            auth_response = input()
+            verifier = input("PIN: ")
 
-            access_token = oauth2_user_handler.fetch_token(auth_response)
+            access_token, access_token_secret = oauth1_user_handler.get_access_token(
+                verifier
+            )
 
-            self.config["token"]["access_token"] = access_token["access_token"]
-            self.config["token"]["expires_at"] = access_token["expires_at"]
-            self.config["token"]["refresh_token"] = access_token["refresh_token"]
+            self.config["tokens"] = {
+                "access_token": access_token,
+                "access_token_secret": access_token_secret,
+            }
 
             self.save_config()
 
-        if self.should_we_refresh_token(self.config["token"]):
-            self.refresh_token()
-
-        self.v2_api = tweepy.Client(self.config["token"]["access_token"])
+        self.v2_api = tweepy.Client(
+            consumer_key=self.consumer_key,
+            consumer_secret=self.consumer_secret,
+            access_token=self.config["tokens"]["access_token"],
+            access_token_secret=self.config["tokens"]["access_token_secret"],
+        )
 
         self.stats["times_logged"] += 1
 
@@ -144,7 +103,8 @@ class Retweet(object):
                 sort_order="recency",
                 expansions="entities.mentions.username",
                 since_id=self.config.get("most_recent_tweet"),
-                next_token=next_token
+                next_token=next_token,
+                user_auth=True,
             )
             if response.data is None:
                 break
@@ -162,7 +122,9 @@ class Retweet(object):
 
     @staticmethod
     def is_word_in_string(string):
-        if re.search(r"\b(alfajor)\b", unidecode(string.lower())) or re.search(r"\b(alfajores)\b", unidecode(string.lower())):
+        if re.search(r"\b(alfajor)\b", unidecode(string.lower())) or re.search(
+            r"\b(alfajores)\b", unidecode(string.lower())
+        ):
             return True
         return False
 
@@ -180,11 +142,13 @@ class Retweet(object):
             return False
         return True
 
-    @backoff.on_exception(backoff.expo, (TwitterServerError, HTTPException), max_time=60)
+    @backoff.on_exception(
+        backoff.expo, (TwitterServerError, HTTPException), max_time=60
+    )
     @backoff.on_exception(backoff.expo, TooManyRequests, max_tries=2)
     def do_retweet(self, tweet):
         try:
-            self.v2_api.retweet(tweet_id=tweet.id, user_auth=False)
+            self.v2_api.retweet(tweet_id=tweet.id, user_auth=True)
         except BadRequest:
             self.logs.append(f"Tweet was not found {tweet.id}")
 
