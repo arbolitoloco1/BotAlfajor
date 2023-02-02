@@ -10,6 +10,8 @@ import re
 
 
 class Retweet(object):
+    MAX_RESULT_SIZE = 500
+
     def __init__(self):
         self.consumer_key = os.environ.get("TWITTER_CONSUMER_KEY")
         self.consumer_secret = os.environ.get("TWITTER_CONSUMER_SECRET")
@@ -109,6 +111,8 @@ class Retweet(object):
             if response.data is None:
                 break
             tweets.extend(response.data)
+            if len(tweets) >= self.MAX_RESULT_SIZE:
+                break
             if "next_token" not in response.meta:
                 break
             next_token = response.meta["next_token"]
