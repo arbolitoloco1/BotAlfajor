@@ -2,6 +2,8 @@
 This is a simple script which uses the Twitter API to search and retweet tweets containing the word 'alfajor' or 
 'alfajores'. Can be adapted for any other word the user may prefer.
 
+Note: As of March 28, 2023, the original bot account has been suspended for violating Twitter's rules.
+
 ## Usage
 ### Environment variables
 The script reads three different variables from the environment: `TWITTER_CONSUMER_KEY`, `TWITTER_CONSUMER_SECRET`, 
